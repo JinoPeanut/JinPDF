@@ -1,0 +1,47 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements.txt
+      - shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path src).Path
+          python -m unittest discover -s tests -v
+      - shell: pwsh
+        run: ./build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JinPDF-Windows
+          path: dist/*.zip
+          if-no-files-found: error
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PDFMATE_VERSION: ${{ github.ref_name }}
+        run: |
+          $files = @(Get-ChildItem dist -Filter '*.zip' | ForEach-Object FullName)
+          gh release view $env:PDFMATE_VERSION --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:PDFMATE_VERSION @files --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $env:PDFMATE_VERSION @files --verify-tag --generate-notes --repo $env:GITHUB_REPOSITORY
+          }
+          exit $LASTEXITCODE
