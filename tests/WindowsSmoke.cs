@@ -220,6 +220,19 @@ static class WindowsSmoke
                 throw new Exception("A new success did not replace and collapse the previous result");
             Console.WriteLine("Recent merge expands with ordered page counts and only updates after success OK");
 
+            merge.AddFiles(new[] { jfif });
+            if (!save.Enabled) throw new Exception("Merge must be available for a single input file");
+            save.PerformClick();
+            await Until(() => tabs.TabPages.Count == 4, "Single image produces a new PDF tab");
+            var singleView = (DocumentView)tabs.SelectedTab.Tag;
+            var single = Path.Combine(later, "사진_병합 (2).pdf");
+            if (singleView.FilePath != single || rows.Rows.Count != 0 || Count(worker, single) != 1)
+                throw new Exception("Single file merge produced the wrong output or left queued files");
+            ClickTabClose(tabs, tabs.SelectedIndex);
+            tabs.SelectedIndex = 0;
+            if (Find<Label>(merge, "사진_병합 (2).pdf · 파일 1개 · 총 1쪽") == null)
+                throw new Exception("Recent merge does not show the single-file result");
+
             var longPdf = (string)worker.Run(new { op = "merge", anchor = Path.Combine(data, "18-pages.pdf"),
                 files = Enumerable.Repeat(copies[4], 6).ToArray() })["path"];
             Invoke(app, "OpenPdf", longPdf);

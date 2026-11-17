@@ -50,6 +50,17 @@ class EngineTests(unittest.TestCase):
             handle({'op': 'merge', 'anchor': str(self.original), 'files': [str(self.original), str(self.root / 'missing.pdf')]})
         self.assertEqual(list(self.root.glob('*병합*')), [])
 
+    def test_single_pdf_merge_saves_a_separate_result(self):
+        args = {'op': 'merge', 'anchor': str(self.original), 'files': [str(self.original)]}
+        result = handle(args)
+        merged = Path(result['path'])
+        self.assertEqual(merged, self.root / '원본_병합.pdf')
+        self.assertEqual(result['count'], 3)
+        self.assertEqual([int(page.mediabox.width) for page in PdfReader(merged).pages], [100, 200, 300])
+        self.assertTrue(self.original.is_file())
+        with self.assertRaises(ValueError):
+            handle(dict(args, files=[]))
+
     def test_jfif_can_be_merged_as_one_pdf_page(self):
         image = self.root / '사진.JFIF'
         Image.new('RGB', (120, 80), (42, 75, 190)).save(image, 'JPEG')

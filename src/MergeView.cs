@@ -264,7 +264,7 @@ sealed class MergeView : UserControl
     void UpdateButtons()
     {
         add.Enabled = !busy;
-        merge.Enabled = !busy && files.Rows.Count >= 2;
+        merge.Enabled = !busy && files.Rows.Count > 0;
         remove.Enabled = !busy && files.CheckedRows().Length > 0;
     }
 

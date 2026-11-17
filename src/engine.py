@@ -80,8 +80,8 @@ def handle(request, progress=lambda **_: None):
     op = request['op']
     if op == 'merge':
         files = request['files']
-        if len(files) < 2:
-            raise ValueError('병합할 파일을 두 개 이상 추가하세요.')
+        if not files:
+            raise ValueError('병합할 파일을 하나 이상 추가하세요.')
         writer = PdfWriter()
         field_names = set()
         for index, path in enumerate(files, start=1):
