@@ -18,11 +18,22 @@ sealed class MergeView : UserControl
     readonly Button merge = Theme.Button("병합하기", true);
     readonly Button remove = Theme.Button("선택 항목 제외");
     readonly Button add = Theme.Button("파일 추가");
+    readonly RowStyle headingHeight = new RowStyle(SizeType.Absolute, 44);
+    readonly RowStyle dropHeight = new RowStyle(SizeType.Absolute, 65);
+    readonly RowStyle actionsHeight = new RowStyle(SizeType.Absolute, 48);
+    readonly RowStyle recentHeight = new RowStyle(SizeType.Absolute, 0);
+    readonly Label recentSummary = Theme.Text("");
+    readonly Button recentToggle = Theme.Button("파일별 쪽수 보기");
+    readonly Control recentPanel;
+    readonly ListView recentFiles = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+        MultiSelect = false, HeaderStyle = ColumnHeaderStyle.None, ShowItemToolTips = true,
+        Margin = new Padding(0, 3, 0, 0), AccessibleName = "최근 병합 파일별 쪽수" };
     readonly ToolTip tips = new ToolTip();
     readonly List<Entry> added = new List<Entry>();
     readonly EngineClient conversion;
     readonly string temporary;
     bool busy;
+    bool recentExpanded;
     public event Action<string> Completed;
     public bool IsWorking { get { return busy; } }
 
@@ -39,13 +50,14 @@ sealed class MergeView : UserControl
         this.temporary = temporary;
         Dock = DockStyle.Fill;
         BackColor = Color.White;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
             Padding = new Padding(24, 18, 24, 0), Margin = Padding.Empty, BackColor = Color.White };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(headingHeight);
+        layout.RowStyles.Add(dropHeight);
+        layout.RowStyles.Add(actionsHeight);
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(recentHeight);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 94));
         var heading = Theme.Text("파일 병합", 20, true);
         heading.Margin = Padding.Empty;
@@ -91,9 +103,78 @@ sealed class MergeView : UserControl
         files.ChecksChanged += UpdateButtons;
         table.Controls.Add(files);
         layout.Controls.Add(table, 0, 3);
-        layout.Controls.Add(CreateFooter(), 0, 4);
+        recentPanel = CreateRecentMerge();
+        layout.Controls.Add(recentPanel, 0, 4);
+        layout.Controls.Add(CreateFooter(), 0, 5);
         Controls.Add(layout);
+        SizeChanged += delegate { if (recentHeight.Height > 0) FitRecentHeight(); };
         UpdateCounts();
+    }
+
+    Control CreateRecentMerge()
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2,
+            Margin = new Padding(0, 8, 0, 0), Padding = new Padding(11, 3, 9, 5), BackColor = Theme.Surface, Visible = false };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.Paint += delegate(object sender, PaintEventArgs e) { Theme.DrawBorder(e.Graphics, panel.ClientRectangle); };
+
+        var heading = Theme.Text("최근 병합", 10, true);
+        heading.Anchor = AnchorStyles.Left;
+        heading.Margin = new Padding(0, 0, 12, 0);
+        recentSummary.AutoSize = false;
+        recentSummary.AutoEllipsis = true;
+        recentSummary.TextAlign = ContentAlignment.MiddleLeft;
+        recentSummary.Dock = DockStyle.Fill;
+        recentSummary.Margin = new Padding(0, 0, 8, 0);
+        recentToggle.Margin = Padding.Empty;
+        recentToggle.Anchor = AnchorStyles.Right;
+        recentToggle.MinimumSize = new Size(130, 35);
+        recentToggle.Click += delegate { SetRecentExpanded(!recentExpanded); };
+        recentFiles.Columns.Add("파일 이름");
+        recentFiles.Columns.Add("쪽수", 80, HorizontalAlignment.Right);
+        recentFiles.SizeChanged += delegate {
+            recentFiles.Columns[0].Width = Math.Max(40, recentFiles.ClientSize.Width - 82 - SystemInformation.VerticalScrollBarWidth);
+        };
+        panel.Controls.Add(heading, 0, 0);
+        panel.Controls.Add(recentSummary, 1, 0);
+        panel.Controls.Add(recentToggle, 2, 0);
+        panel.Controls.Add(recentFiles, 0, 1);
+        panel.SetColumnSpan(recentFiles, 3);
+        return panel;
+    }
+
+    void SetRecentExpanded(bool expanded)
+    {
+        recentExpanded = expanded;
+        FitRecentHeight();
+        recentFiles.Visible = expanded;
+        recentToggle.Text = expanded ? "접기" : "파일별 쪽수 보기";
+    }
+
+    void FitRecentHeight()
+    {
+        // Keep room for the file list and merge controls when the window is small.
+        bool compact = recentExpanded && ClientSize.Height < 460;
+        headingHeight.Height = compact ? 38 : 44;
+        dropHeight.Height = compact ? 55 : 65;
+        actionsHeight.Height = compact ? 42 : 48;
+        int available = ClientSize.Height - (compact ? 311 : 333);
+        recentHeight.Height = recentExpanded ? Math.Min(188, Math.Max(84, available)) : 54;
+    }
+
+    void ShowRecentMerge(string path, int pageCount, Entry[] entries)
+    {
+        recentSummary.Text = string.Format("{0} · 파일 {1:N0}개 · 총 {2:N0}쪽", Path.GetFileName(path), entries.Length, pageCount);
+        tips.SetToolTip(recentSummary, recentSummary.Text);
+        recentFiles.Items.Clear();
+        recentFiles.Items.AddRange(entries.Select(entry => new ListViewItem(new[] {
+            Path.GetFileName(entry.Path), string.Format("{0:N0}쪽", entry.Count) }) { ToolTipText = entry.Path }).ToArray());
+        SetRecentExpanded(false);
+        recentPanel.Visible = true;
     }
 
     Control CreateFooter()
@@ -263,7 +344,8 @@ sealed class MergeView : UserControl
             progress.Value = progress.Maximum;
             files.Rows.Clear();
             added.Clear();
-            state.Text = "저장 완료 · " + Path.GetFileName(path) + " · " + result["count"] + "쪽";
+            ShowRecentMerge(path, (int)result["count"], entries);
+            state.Text = "";
             if (Completed != null) Completed(path);
         }
         catch (Exception error)

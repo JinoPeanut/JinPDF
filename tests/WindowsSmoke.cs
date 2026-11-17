@@ -63,6 +63,10 @@ static class WindowsSmoke
         VerifyButtonPaint();
         var tabs = Find<TabControl>(app);
         var merge = Find<MergeView>(app);
+        var recentToggle = Find<Button>(merge, "파일별 쪽수 보기");
+        var recentFiles = Find<ListView>(merge);
+        if (recentToggle == null || recentFiles == null || recentToggle.Visible)
+            throw new Exception("Recent results must stay hidden before the first successful merge");
         if (app.Text != "JinPDF" || Find<Label>(app, "JinPDF") == null) throw new Exception("New name must appear in the window and header");
         if (tabs.TabPages.Count != 1 || tabs.TabPages[0].Text != "파일 병합") throw new Exception("Pinned merge tab missing");
         var samples = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samples");
@@ -130,6 +134,26 @@ static class WindowsSmoke
         if (rows.Rows.Count != 0 || save.Enabled) throw new Exception("Successful merge left files in the queue");
 
         var mergedView = (DocumentView)tabs.SelectedTab.Tag;
+        tabs.SelectedIndex = 0;
+        if (!recentToggle.Visible || recentFiles.Visible || Find<Label>(merge, "01-spreadsheet_병합.pdf · 파일 5개 · 총 8쪽") == null)
+            throw new Exception("The latest successful merge was not shown as a collapsed summary");
+        Capture(app, Path.Combine(data, "recent-merge-collapsed.png"));
+        recentToggle.PerformClick();
+        var firstDetails = recentFiles.Items.Cast<ListViewItem>().Select(row => row.Text + " " + row.SubItems[1].Text).ToArray();
+        if (!recentFiles.Visible || !firstDetails.SequenceEqual(new[] { "02-presentation.pptx 2쪽", "01-spreadsheet.xlsx 1쪽",
+            "03-landscape.jpg 1쪽", "04-portrait.png 1쪽", "05-three-pages.pdf 3쪽" }))
+            throw new Exception("Recent input page counts do not match the merge order");
+        Capture(app, Path.Combine(data, "recent-merge-expanded.png"));
+        var normalSize = app.Size;
+        app.Size = app.MinimumSize;
+        await Task.Yield();
+        if (rows.ClientSize.Height <= rows.ColumnHeadersHeight || !merge.ClientRectangle.Contains(merge.PointToClient(save.PointToScreen(Point.Empty))))
+            throw new Exception(string.Format("The expanded result hides the file list or merge action in a small window. Merge view {0}, file grid {1}, header {2}, button at {3}",
+                merge.ClientSize, rows.ClientSize, rows.ColumnHeadersHeight, merge.PointToClient(save.PointToScreen(Point.Empty))));
+        app.Size = normalSize;
+        recentToggle.PerformClick();
+        if (recentFiles.Visible) throw new Exception("Closing details did not collapse the list");
+        tabs.SelectedIndex = 1;
         await Until(() => Find<PictureBox>(mergedView) != null && Children(mergedView).OfType<PictureBox>().Count(p => p.Image != null) >= 3,
             "Viewer and thumbnails render");
         var checks = Children(mergedView).OfType<CheckBox>().Take(2).ToArray();
@@ -183,12 +207,18 @@ static class WindowsSmoke
                 save.PerformClick();
                 await Until(() => save.Enabled, "Failed merge can be retried");
                 if (rows.Rows.Count != 2) throw new Exception("Failed merge cleared its inputs");
+                if (Find<Label>(merge, "01-spreadsheet_병합.pdf · 파일 5개 · 총 8쪽") == null)
+                    throw new Exception("A failed merge replaced the latest successful result");
             }
             finally { File.Move(missing, copies[4]); }
             save.PerformClick();
             string nextMerge = Path.Combine(later, "사진_병합.pdf");
             await Until(() => tabs.TabPages.Count == 3, "New batch opens its result");
             if (rows.Rows.Count != 0 || Count(worker, nextMerge) != 4) throw new Exception("Second batch did not reset its first input or page list");
+            tabs.SelectedIndex = 0;
+            if (Find<Label>(merge, "사진_병합.pdf · 파일 2개 · 총 4쪽") == null || recentFiles.Visible || recentFiles.Items.Count != 2)
+                throw new Exception("A new success did not replace and collapse the previous result");
+            Console.WriteLine("Recent merge expands with ordered page counts and only updates after success OK");
 
             var longPdf = (string)worker.Run(new { op = "merge", anchor = Path.Combine(data, "18-pages.pdf"),
                 files = Enumerable.Repeat(copies[4], 6).ToArray() })["path"];

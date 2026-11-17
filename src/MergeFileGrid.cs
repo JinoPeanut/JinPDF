@@ -266,7 +266,14 @@ sealed class MergeFileGrid : DataGridView
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (dropIndex < 0 || Rows.Count == 0) return;
+        if (Rows.Count == 0)
+        {
+            var body = Rectangle.FromLTRB(0, ColumnHeadersHeight, ClientSize.Width, ClientSize.Height);
+            TextRenderer.DrawText(e.Graphics, "추가한 파일이 없습니다", Font, body, Theme.Muted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            return;
+        }
+        if (dropIndex < 0) return;
         var bounds = GetRowDisplayRectangle(Math.Min(dropIndex, Rows.Count - 1), true);
         if (bounds.Height == 0) return;
         int y = dropIndex == Rows.Count ? bounds.Bottom - 2 : bounds.Top;
