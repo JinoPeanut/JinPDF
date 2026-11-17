@@ -1,19 +1,16 @@
-name: Windows release
+name: Publish JinPDF v1.2.1
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
-
+    branches: ['codex/release-v1.2.1']
 permissions:
-  contents: read
-
+  contents: write
 jobs:
   package:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: '7b59488d27f45aad5dbe45cc637286f2fbbe984a'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -25,23 +22,20 @@ jobs:
           python -m unittest discover -s tests -v
       - shell: pwsh
         run: ./build.ps1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: JinPDF-Windows
-          path: dist/*.zip
-          if-no-files-found: error
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish v1.2.1
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          PDFMATE_VERSION: ${{ github.ref_name }}
+          RELEASE_COMMIT: '7b59488d27f45aad5dbe45cc637286f2fbbe984a'
         run: |
-          $files = @(Get-ChildItem dist -Filter '*.zip' | ForEach-Object FullName)
-          gh release view $env:PDFMATE_VERSION --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:PDFMATE_VERSION @files --clobber --repo $env:GITHUB_REPOSITORY
-          } else {
-            gh release create $env:PDFMATE_VERSION @files --verify-tag --generate-notes --repo $env:GITHUB_REPOSITORY
-          }
+          $assets = @(Get-ChildItem dist -Filter 'JinPDF-v1.2.1-*.zip' | ForEach-Object FullName)
+          if ($assets.Count -ne 2) { throw 'Expected the Windows ZIP and samples ZIP.' }
+          $notes = Join-Path $env:RUNNER_TEMP 'jinpdf-v1.2.1.md'
+          @'
+          병합 탭에 파일을 하나만 추가해도 `병합하기`를 누를 수 있습니다. 결과를 `_병합.pdf`로 저장하고 새 탭에서 엽니다.
+          README 하단에서 버전별 변경 내역을 확인할 수 있습니다.
+
+          Windows 실행 ZIP 전체를 압축 해제한 뒤 `JinPDF.exe`를 실행하세요.
+          '@ | Set-Content -LiteralPath $notes -Encoding utf8
+          gh release create v1.2.1 @assets --target $env:RELEASE_COMMIT --title 'JinPDF v1.2.1' --notes-file $notes --latest --repo $env:GITHUB_REPOSITORY
           exit $LASTEXITCODE
