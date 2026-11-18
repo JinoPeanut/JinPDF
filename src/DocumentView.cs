@@ -6,16 +6,22 @@ using System.Windows.Forms;
 
 sealed class DocumentView : UserControl
 {
+    const int FitZoom = 3;
+    const int WheelNotch = 120;
+    static readonly double[] ZoomFactors = { 0.5, 0.67, 0.8, 1.0, 1.25, 1.6, 2.0 };
     readonly EngineClient preview;
     readonly string temporary;
     readonly Action<string> status;
     readonly Label counter = Theme.Text("", 10, true);
     readonly PictureBox canvas = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Theme.Surface };
+    readonly Panel viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Surface, Padding = new Padding(16) };
+    readonly ComboBox zoom = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, Margin = new Padding(0, 2, 8, 0) };
     readonly PageThumbnails pageList;
     readonly Button previous = Theme.Button("‹");
     readonly Button next = Theme.Button("›");
     bool initialized;
     int generation;
+    int wheelRemainder;
     int resolution = 1200;
     public string FilePath { get; private set; }
     public int Count { get; private set; }
@@ -48,15 +54,13 @@ sealed class DocumentView : UserControl
         next.Click += delegate { Navigate(Page + 1); };
         var jump = Theme.Button("이동");
         jump.Click += delegate { Jump(); };
-        var zoom = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, Margin = new Padding(0, 2, 8, 0) };
-        zoom.Items.AddRange(new object[] { "맞춤", "125%", "160%", "200%" });
-        zoom.SelectedIndex = 0;
-        var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Surface, Padding = new Padding(16) };
+        zoom.Items.AddRange(new object[] { "50%", "67%", "80%", "맞춤", "125%", "160%", "200%" });
+        zoom.SelectedIndex = FitZoom;
         viewport.Controls.Add(canvas);
         Action applyZoom = delegate {
-            if (zoom.SelectedIndex == 0) { canvas.Dock = DockStyle.Fill; canvas.SizeMode = PictureBoxSizeMode.Zoom; return; }
+            if (zoom.SelectedIndex == FitZoom) { canvas.Dock = DockStyle.Fill; canvas.SizeMode = PictureBoxSizeMode.Zoom; return; }
             if (canvas.Image == null) return;
-            double factor = new[] { 1.0, 1.25, 1.6, 2.0 }[zoom.SelectedIndex];
+            double factor = ZoomFactors[zoom.SelectedIndex];
             int width = Math.Max(100, viewport.ClientSize.Width - 44);
             int height = Math.Max(100, viewport.ClientSize.Height - 44);
             double fit = Math.Min((double)width / canvas.Image.Width, (double)height / canvas.Image.Height) * factor;
@@ -66,7 +70,7 @@ sealed class DocumentView : UserControl
         };
         zoom.SelectedIndexChanged += delegate { applyZoom(); };
         viewport.Resize += delegate { applyZoom(); };
-        canvas.SizeChanged += delegate { if (canvas.Image != null && zoom.SelectedIndex == 0) canvas.Invalidate(); };
+        canvas.SizeChanged += delegate { if (canvas.Image != null && zoom.SelectedIndex == FitZoom) canvas.Invalidate(); };
         ImageChanged = applyZoom;
         tools.Controls.AddRange(new Control[] { previous, next, counter, jump, zoom });
         if (showThumbnails)
@@ -97,6 +101,21 @@ sealed class DocumentView : UserControl
     }
 
     Action ImageChanged;
+
+    public void ChangeZoom(int steps)
+    {
+        zoom.SelectedIndex = Math.Max(0, Math.Min(zoom.Items.Count - 1, zoom.SelectedIndex + steps));
+    }
+
+    public bool ZoomFromWheel(Point screenPoint, int delta)
+    {
+        if (!viewport.ClientRectangle.Contains(viewport.PointToClient(screenPoint))) return false;
+        wheelRemainder += delta;
+        int steps = wheelRemainder / WheelNotch;
+        wheelRemainder %= WheelNotch;
+        if (steps != 0) ChangeZoom(steps);
+        return true;
+    }
 
     public void ActivateView()
     {

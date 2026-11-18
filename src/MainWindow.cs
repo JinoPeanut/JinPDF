@@ -7,8 +7,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-sealed class MainWindow : Form
+sealed class MainWindow : Form, IMessageFilter
 {
+    const int MouseWheelMessage = 0x020a;
+    const int ControlKeyInMouseMessage = 0x0008;
     readonly EngineClient preview = new EngineClient();
     readonly EngineClient thumbs = new EngineClient();
     readonly EngineClient conversion = new EngineClient();
@@ -126,7 +128,10 @@ sealed class MainWindow : Form
         layout.Controls.Add(footer, 0, 2);
         Controls.Add(layout);
         UpdateTools();
-        Shown += delegate { foreach (var path in args) OpenPdf(path); };
+        Shown += delegate {
+            Application.AddMessageFilter(this);
+            foreach (var path in args) OpenPdf(path);
+        };
     }
 
     DocumentView Active { get { return tabs.SelectedTab == null ? null : tabs.SelectedTab.Tag as DocumentView; } }
@@ -339,8 +344,37 @@ sealed class MainWindow : Form
             case Keys.Control | Keys.O: Browse(); return true;
             case Keys.Control | Keys.W: CloseTab(tabs.SelectedTab); return true;
             case Keys.Control | Keys.P: if (print.Enabled) PrintActive(); return true;
-            default: return base.ProcessCmdKey(ref msg, key);
+            case Keys.Add:
+            case Keys.Oemplus:
+            case Keys.Shift | Keys.Oemplus:
+            case Keys.Subtract:
+            case Keys.OemMinus:
+                var zoomDocument = Active;
+                if (zoomDocument == null) break;
+                zoomDocument.ChangeZoom(key == Keys.Subtract || key == Keys.OemMinus ? -1 : 1);
+                return true;
+            case Keys.Left:
+            case Keys.Up:
+            case Keys.Right:
+            case Keys.Down:
+                var document = Active;
+                if (document == null || Control.FromChildHandle(msg.HWnd) is ComboBox) break;
+                document.Navigate(document.Page + (key == Keys.Left || key == Keys.Up ? -1 : 1));
+                return true;
         }
+        return base.ProcessCmdKey(ref msg, key);
+    }
+
+    bool IMessageFilter.PreFilterMessage(ref Message message)
+    {
+        if (message.Msg != MouseWheelMessage || (message.WParam.ToInt64() & ControlKeyInMouseMessage) == 0) return false;
+        var document = Active;
+        var target = Control.FromChildHandle(message.HWnd);
+        if (document == null || target == null || target.FindForm() != this) return false;
+        long position = message.LParam.ToInt64();
+        var screenPoint = new Point(unchecked((short)position), unchecked((short)(position >> 16)));
+        int delta = unchecked((short)(message.WParam.ToInt64() >> 16));
+        return document.ZoomFromWheel(screenPoint, delta);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -355,6 +389,7 @@ sealed class MainWindow : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        Application.RemoveMessageFilter(this);
         base.OnFormClosed(e);
         tabs.Dispose();
         preview.Dispose();

@@ -134,6 +134,12 @@ static class WindowsSmoke
         if (rows.Rows.Count != 0 || save.Enabled) throw new Exception("Successful merge left files in the queue");
 
         var mergedView = (DocumentView)tabs.SelectedTab.Tag;
+        if (!PressViewerKey(tabs, Keys.Right) || mergedView.Page != 1 ||
+            !PressViewerKey(tabs, Keys.Down) || mergedView.Page != 2 ||
+            !PressViewerKey(tabs, Keys.Left) || mergedView.Page != 1 ||
+            !PressViewerKey(tabs, Keys.Up) || mergedView.Page != 0 ||
+            !PressViewerKey(tabs, Keys.Left) || mergedView.Page != 0)
+            throw new Exception("Arrow keys did not navigate the merged PDF or respect the first page");
         tabs.SelectedIndex = 0;
         if (!recentToggle.Visible || recentFiles.Visible || Find<Label>(merge, "01-spreadsheet_병합.pdf · 파일 5개 · 총 8쪽") == null)
             throw new Exception("The latest successful merge was not shown as a collapsed summary");
@@ -156,6 +162,7 @@ static class WindowsSmoke
         tabs.SelectedIndex = 1;
         await Until(() => Find<PictureBox>(mergedView) != null && Children(mergedView).OfType<PictureBox>().Count(p => p.Image != null) >= 3,
             "Viewer and thumbnails render");
+        VerifyViewerZoom(app, tabs, mergedView);
         var checks = Children(mergedView).OfType<CheckBox>().Take(2).ToArray();
         foreach (var box in checks) box.Checked = true;
         // Accept the actual confirmation modal using the test UI thread.
@@ -238,6 +245,12 @@ static class WindowsSmoke
             Invoke(app, "OpenPdf", longPdf);
             await Until(() => tabs.TabPages.Count == 4, "18-page PDF opens");
             var longView = (DocumentView)tabs.SelectedTab.Tag;
+            if (!PressViewerKey(tabs, Keys.Right) || longView.Page != 1)
+                throw new Exception("Arrow keys did not navigate a directly opened PDF");
+            var zoom = Find<ComboBox>(longView);
+            PressViewerKey(zoom, Keys.Down);
+            if (longView.Page != 1) throw new Exception("Arrow keys in the zoom selector changed the PDF page");
+            PressViewerKey(tabs, Keys.Left);
             var scroll = Find<VScrollBar>(longView);
             if (scroll == null || !scroll.Visible || Children(longView).Any(c => c.AccessibleName == "다음 썸네일 목록"))
                 throw new Exception("Page list does not provide continuous scrolling");
@@ -278,6 +291,43 @@ static class WindowsSmoke
             await Until(() => File.Exists(printed) && new FileInfo(printed).Length > 0, "Windows virtual printer output");
             if (Count(worker, printed) != 2) throw new Exception("Incorrect virtual print output page count");
         }
+    }
+
+    static bool PressViewerKey(Control target, Keys key)
+    {
+        var message = Message.Create(target.Handle, 0x0100, (IntPtr)key, IntPtr.Zero);
+        return target.PreProcessMessage(ref message);
+    }
+
+    static void VerifyViewerZoom(MainWindow app, TabControl tabs, DocumentView document)
+    {
+        var zoom = Find<ComboBox>(document);
+        var page = Children(document).OfType<PictureBox>().Single(picture => picture.Dock == DockStyle.Fill);
+        Point overPage = page.PointToScreen(new Point(page.Width / 2, page.Height / 2));
+        if (!PressViewerKey(tabs, Keys.Shift | Keys.Oemplus) || zoom.Text != "125%" || page.Dock == DockStyle.Fill || document.Page != 0)
+            throw new Exception("Plus did not zoom into the current PDF page");
+        int zoomedWidth = page.Width;
+        if (!PressViewerKey(tabs, Keys.Subtract) || zoom.Text != "맞춤" || page.Dock != DockStyle.Fill)
+            throw new Exception("Number-pad minus did not return to fit");
+        if (!PressViewerKey(tabs, Keys.OemMinus) || zoom.Text != "80%" || page.Dock == DockStyle.Fill || page.Width >= zoomedWidth)
+            throw new Exception("Minus did not zoom out below fit");
+        if (!PressViewerKey(tabs, Keys.Add) || zoom.Text != "맞춤") throw new Exception("Number-pad plus did not return to fit");
+
+        // Send a wheel message through the application's normal pre-dispatch filter.
+        var filter = (IMessageFilter)app;
+        if (ViewerWheel(filter, tabs, overPage, 120, false) || zoom.Text != "맞춤") throw new Exception("A plain wheel event zoomed the PDF");
+        if (!ViewerWheel(filter, tabs, overPage, 60, true) || zoom.Text != "맞춤" ||
+            !ViewerWheel(filter, tabs, overPage, 60, true) || zoom.Text != "125%") throw new Exception("Ctrl+wheel did not zoom in one step");
+        if (!ViewerWheel(filter, tabs, overPage, -120, true) || zoom.Text != "맞춤" || document.Page != 0)
+            throw new Exception("Ctrl+wheel did not zoom out on the same PDF page");
+        Console.WriteLine("Plus, minus, and Ctrl+wheel update zoom and the displayed page size OK");
+    }
+
+    static bool ViewerWheel(IMessageFilter filter, Control target, Point screenPoint, int delta, bool control)
+    {
+        int location = (screenPoint.X & 0xffff) | (screenPoint.Y << 16);
+        var message = Message.Create(target.Handle, 0x020a, new IntPtr((delta << 16) | (control ? 0x0008 : 0)), new IntPtr(location));
+        return filter.PreFilterMessage(ref message);
     }
 
     static void VerifyButtonPaint()
