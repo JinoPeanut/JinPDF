@@ -111,6 +111,14 @@ static class WindowsSmoke
             Directory.GetDirectories(data, "JinPDF-*").Any(folder => Directory.GetFiles(folder, "*.pdf").Length > 0))
             throw new Exception("Adding files started conversion before the merge button was clicked");
         Console.WriteLine("Adding mixed files stages them without conversion OK");
+        Find<Button>(merge, "전체선택").PerformClick();
+        if (((MergeFileGrid)rows).CheckedRows().Length != 5 || Find<Label>(merge, "5 / 5개 선택") == null)
+            throw new Exception("Merge select all failed");
+        Capture(app, Path.Combine(data, "merge-select-all.png"));
+        Find<Button>(merge, "선택 해제").PerformClick();
+        if (((MergeFileGrid)rows).CheckedRows().Length != 0 || exclude.Enabled)
+            throw new Exception("Merge clear selection failed");
+        Console.WriteLine("Merge select all and clear OK");
         rows.Rows[1].Cells["Check"].Value = true;
         Capture(app, Path.Combine(data, "merge-preview.png"));
         DragGridRow(rows, 0, 1);
@@ -163,6 +171,15 @@ static class WindowsSmoke
         await Until(() => Find<PictureBox>(mergedView) != null && Children(mergedView).OfType<PictureBox>().Count(p => p.Image != null) >= 3,
             "Viewer and thumbnails render");
         VerifyViewerZoom(app, tabs, mergedView);
+        await VerifyViewerRotation(tabs, mergedView);
+        Find<Button>(mergedView, "전체선택").PerformClick();
+        foreach (string caption in new[] { "전체선택", "선택 해제", "↶ 왼쪽 회전", "↷ 오른쪽 회전" })
+        {
+            var button = Find<Button>(mergedView, caption);
+            if (!button.Parent.ClientRectangle.Contains(button.Bounds)) throw new Exception("Clipped document button: " + caption);
+        }
+        Capture(app, Path.Combine(data, "document-select-all.png"));
+        Find<Button>(mergedView, "선택 해제").PerformClick();
         var checks = Children(mergedView).OfType<CheckBox>().Take(2).ToArray();
         foreach (var box in checks) box.Checked = true;
         // Accept the actual confirmation modal using the test UI thread.
@@ -187,6 +204,11 @@ static class WindowsSmoke
             Invoke(app, "ShowComparison", mergedView, editedView);
             if (Find<SplitContainer>(tabs.SelectedTab) == null) throw new Exception("Comparison split missing");
             await Until(() => Children(tabs.SelectedTab).OfType<PictureBox>().Count(p => p.Image != null) == 2, "Side by side PDF render");
+            foreach (var pane in Children(tabs.SelectedTab).OfType<DocumentView>())
+            {
+                var button = Find<Button>(pane, "↷ 오른쪽 회전");
+                if (!button.Parent.ClientRectangle.Contains(button.Bounds)) throw new Exception("Clipped comparison rotate button " + button.Bounds + " in " + button.Parent.ClientRectangle);
+            }
             Capture(app, Path.Combine(data, "comparison-preview.png"));
             var comparison = tabs.SelectedTab;
             ClickTabClose(tabs, 1);
@@ -270,6 +292,15 @@ static class WindowsSmoke
             await Until(() => Find<PictureBox>(scroll.Parent).Image != null, "Thumbnails render again on scroll back");
             Capture(app, Path.Combine(data, "continuous-pages.png"));
             Console.WriteLine("Single scrollbar, mouse wheel through page 10, and multi-page selection across 18 pages OK");
+            Find<Button>(longView, "전체선택").PerformClick();
+            if (longView.SelectedPages.Count() != 18) throw new Exception("Select all missed offscreen pages");
+            scroll.Value = scroll.Maximum - scroll.LargeChange + 1;
+            if (!Checkbox(longView, 18).Checked) throw new Exception("Offscreen selection did not restore its checkbox");
+            Find<Button>(longView, "선택 해제").PerformClick();
+            scroll.Value = 0;
+            if (longView.SelectedPages.Any() || Checkbox(longView, 1).Checked)
+                throw new Exception("Clear selection left selected pages");
+            Console.WriteLine("Page select all and clear include offscreen pages OK");
 
             const string printer = "Microsoft Print to PDF";
             if (!PrinterSettings.InstalledPrinters.Cast<string>().Contains(printer))
@@ -297,6 +328,33 @@ static class WindowsSmoke
     {
         var message = Message.Create(target.Handle, 0x0100, (IntPtr)key, IntPtr.Zero);
         return target.PreProcessMessage(ref message);
+    }
+
+    static async Task VerifyViewerRotation(TabControl tabs, DocumentView document)
+    {
+        var canvas = Children(document).OfType<PictureBox>().Single(p => p.Dock == DockStyle.Fill);
+        await Until(() => canvas.Image != null, "Rotation page ready");
+        var original = canvas.Image.Size;
+        Find<Button>(document, "↷ 오른쪽 회전").PerformClick();
+        if (canvas.Image.Width != original.Height || canvas.Image.Height != original.Width || document.Page != 0)
+            throw new Exception("Rotate right button did not rotate current page");
+        if (!PressViewerKey(tabs, Keys.Control | Keys.Shift | Keys.Left) || canvas.Image.Size != original)
+            throw new Exception("Rotate left shortcut failed");
+        if (!PressViewerKey(tabs, Keys.Control | Keys.Shift | Keys.Right) || canvas.Image.Width != original.Height)
+            throw new Exception("Rotate right shortcut failed");
+        for (int turn = 0; turn < 3; turn++) Find<Button>(document, "↷ 오른쪽 회전").PerformClick();
+        if (canvas.Image.Size != original) throw new Exception("Four rotations did not restore orientation");
+        Find<Button>(document, "↶ 왼쪽 회전").PerformClick();
+        var previous = canvas.Image;
+        document.Navigate(1);
+        await Until(() => canvas.Image != previous, "Another page after rotation");
+        previous = canvas.Image;
+        document.Navigate(0);
+        await Until(() => canvas.Image != previous, "Return to rotated page");
+        if (canvas.Image.Width != original.Height || canvas.Image.Height != original.Width)
+            throw new Exception("Navigation lost per-page rotation");
+        Find<Button>(document, "↷ 오른쪽 회전").PerformClick();
+        Console.WriteLine("Rotation buttons, shortcuts, full turn and per-page persistence OK");
     }
 
     static void VerifyViewerZoom(MainWindow app, TabControl tabs, DocumentView document)

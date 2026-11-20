@@ -344,6 +344,12 @@ sealed class MainWindow : Form, IMessageFilter
             case Keys.Control | Keys.O: Browse(); return true;
             case Keys.Control | Keys.W: CloseTab(tabs.SelectedTab); return true;
             case Keys.Control | Keys.P: if (print.Enabled) PrintActive(); return true;
+            case Keys.Control | Keys.Shift | Keys.Left:
+            case Keys.Control | Keys.Shift | Keys.Right:
+                var rotatingDocument = Active;
+                if (rotatingDocument == null) break;
+                rotatingDocument.RotatePage((key & Keys.KeyCode) == Keys.Left ? -1 : 1);
+                return true;
             case Keys.Add:
             case Keys.Oemplus:
             case Keys.Shift | Keys.Oemplus:

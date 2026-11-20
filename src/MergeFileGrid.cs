@@ -18,6 +18,7 @@ sealed class MergeFileGrid : DataGridView
     Rectangle dragThreshold;
     int dropIndex = -1;
     int scrollTick;
+    bool selecting;
 
     public event Action<DataGridViewRow[]> ExcludeRequested;
     public event Action<string[]> FilesDropped;
@@ -89,6 +90,16 @@ sealed class MergeFileGrid : DataGridView
         return Rows.Cast<DataGridViewRow>().Where(row => Equals(row.Cells[Check].Value, true)).ToArray();
     }
 
+    public void SelectFiles(bool all)
+    {
+        if (ReadOnly) return;
+        EndEdit();
+        selecting = true;
+        foreach (DataGridViewRow row in Rows) row.Cells[Check].Value = all;
+        selecting = false;
+        if (ChecksChanged != null) ChecksChanged();
+    }
+
     public DataGridViewRow AddFile(string path, object entry)
     {
         var row = new DataGridViewRow { Tag = entry, Height = RowTemplate.Height };
@@ -114,7 +125,7 @@ sealed class MergeFileGrid : DataGridView
             bool selected = Equals(row.Cells[Check].Value, true);
             row.DefaultCellStyle.BackColor = selected ? Theme.Tint : Color.White;
             row.DefaultCellStyle.SelectionBackColor = selected ? Theme.Tint : Theme.Surface;
-            if (ChecksChanged != null) ChecksChanged();
+            if (!selecting && ChecksChanged != null) ChecksChanged();
         }
         base.OnCellValueChanged(e);
     }

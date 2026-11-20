@@ -17,6 +17,7 @@ sealed class PageThumbnails : UserControl
     readonly int count;
     bool rendering;
     int currentPage;
+    bool selecting;
 
     sealed class Tile
     {
@@ -36,6 +37,18 @@ sealed class PageThumbnails : UserControl
     }
 
     public IEnumerable<int> SelectedPages { get { return selection; } }
+    public event Action SelectionChanged;
+
+    public void SelectPages(bool all)
+    {
+        selecting = true;
+        selection.Clear();
+        if (all) selection.UnionWith(Enumerable.Range(0, count));
+        foreach (var tile in tiles)
+            tile.Value.Card.Controls.OfType<CheckBox>().Single().Checked = all;
+        selecting = false;
+        if (SelectionChanged != null) SelectionChanged();
+    }
 
     public PageThumbnails(int count, Func<int, Bitmap> render, Action<int> open)
     {
@@ -128,7 +141,11 @@ sealed class PageThumbnails : UserControl
             Location = new Point(8, 101) };
         var picture = new PictureBox { Location = new Point(6, 4), Height = 94, SizeMode = PictureBoxSizeMode.Zoom,
             Cursor = Cursors.Hand, AccessibleName = (page + 1) + "쪽 보기" };
-        pick.CheckedChanged += delegate { if (pick.Checked) selection.Add(page); else selection.Remove(page); };
+        pick.CheckedChanged += delegate {
+            if (selecting) return;
+            if (pick.Checked) selection.Add(page); else selection.Remove(page);
+            if (SelectionChanged != null) SelectionChanged();
+        };
         picture.Click += delegate { open(page); };
         foreach (Control target in new Control[] { card, pick, picture }) target.MouseWheel += ScrollWheel;
         card.Controls.AddRange(new Control[] { pick, picture });

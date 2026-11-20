@@ -18,6 +18,9 @@ sealed class MergeView : UserControl
     readonly Button merge = Theme.Button("병합하기", true);
     readonly Button remove = Theme.Button("선택 항목 제외");
     readonly Button add = Theme.Button("파일 추가");
+    readonly Button selectAll = Theme.Button("전체선택");
+    readonly Button clearSelection = Theme.Button("선택 해제");
+    readonly Label selectedCount = Theme.Text("");
     readonly RowStyle headingHeight = new RowStyle(SizeType.Absolute, 44);
     readonly RowStyle dropHeight = new RowStyle(SizeType.Absolute, 65);
     readonly RowStyle actionsHeight = new RowStyle(SizeType.Absolute, 48);
@@ -90,11 +93,19 @@ sealed class MergeView : UserControl
         tips.SetToolTip(caption, "PDF, JPG, JFIF, PNG, Excel, PowerPoint");
         layout.Controls.Add(drop, 0, 1);
 
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false,
-            BackColor = Color.White, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 2, 0, 0) };
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1, BackColor = Color.White, Padding = new Padding(0, 2, 0, 0) };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var selectionTools = Theme.Row();
+        selectAll.Click += delegate { files.SelectFiles(true); };
+        clearSelection.Click += delegate { files.SelectFiles(false); };
+        selectedCount.Margin = new Padding(5, 9, 0, 0);
+        selectionTools.Controls.AddRange(new Control[] { selectAll, clearSelection, selectedCount });
         remove.Margin = Padding.Empty;
         remove.Click += delegate { RemoveRows(files.CheckedRows()); };
-        actions.Controls.Add(remove);
+        actions.Controls.Add(selectionTools, 0, 0);
+        actions.Controls.Add(remove, 1, 0);
         layout.Controls.Add(actions, 0, 2);
 
         var table = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(1), BackColor = Theme.Line };
@@ -263,9 +274,13 @@ sealed class MergeView : UserControl
 
     void UpdateButtons()
     {
+        int selected = files.CheckedRows().Length;
         add.Enabled = !busy;
         merge.Enabled = !busy && files.Rows.Count > 0;
-        remove.Enabled = !busy && files.CheckedRows().Length > 0;
+        remove.Enabled = !busy && selected > 0;
+        selectAll.Enabled = !busy && selected < files.Rows.Count;
+        clearSelection.Enabled = !busy && selected > 0;
+        selectedCount.Text = string.Format("{0:N0} / {1:N0}개 선택", selected, files.Rows.Count);
     }
 
     void UpdateCounts()

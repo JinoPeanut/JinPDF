@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -19,6 +20,9 @@ sealed class DocumentView : UserControl
     readonly PageThumbnails pageList;
     readonly Button previous = Theme.Button("‹");
     readonly Button next = Theme.Button("›");
+    readonly Dictionary<int, int> rotations = new Dictionary<int, int>();
+    readonly ToolTip tips = new ToolTip();
+    int renderedPage = -1;
     bool initialized;
     int generation;
     int wheelRemainder;
@@ -43,10 +47,17 @@ sealed class DocumentView : UserControl
             RowCount = 2, Padding = new Padding(0), Margin = Padding.Empty, BackColor = Color.White };
         if (showThumbnails) layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 176));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 47));
+        var toolbarHeight = new RowStyle(SizeType.Absolute, 47);
+        layout.RowStyles.Add(toolbarHeight);
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var tools = Theme.Row();
-        tools.Padding = new Padding(12, 7, 0, 0);
+        tools.Padding = new Padding(12, 7, 0, 5);
+        tools.WrapContents = true;
+        tools.Layout += delegate {
+            int bottom = tools.Controls.Cast<Control>().Select(control => control.Bottom + control.Margin.Bottom).DefaultIfEmpty(0).Max();
+            int height = Math.Max(47, bottom + tools.Padding.Bottom);
+            if (toolbarHeight.Height != height) toolbarHeight.Height = height;
+        };
         counter.Margin = new Padding(5, 7, 13, 0);
         previous.AccessibleName = "이전 페이지";
         next.AccessibleName = "다음 페이지";
@@ -73,6 +84,13 @@ sealed class DocumentView : UserControl
         canvas.SizeChanged += delegate { if (canvas.Image != null && zoom.SelectedIndex == FitZoom) canvas.Invalidate(); };
         ImageChanged = applyZoom;
         tools.Controls.AddRange(new Control[] { previous, next, counter, jump, zoom });
+        var rotateLeft = Theme.Button("↶ 왼쪽 회전");
+        var rotateRight = Theme.Button("↷ 오른쪽 회전");
+        rotateLeft.Click += delegate { RotatePage(-1); };
+        rotateRight.Click += delegate { RotatePage(1); };
+        tips.SetToolTip(rotateLeft, "현재 페이지를 왼쪽으로 90° 회전 (Ctrl + Shift + ←)");
+        tips.SetToolTip(rotateRight, "현재 페이지를 오른쪽으로 90° 회전 (Ctrl + Shift + →)");
+        tools.Controls.AddRange(new Control[] { rotateLeft, rotateRight });
         if (showThumbnails)
         {
             var remove = Theme.Button("선택 페이지 삭제");
@@ -83,13 +101,53 @@ sealed class DocumentView : UserControl
             remove.Margin = new Padding(8, 5, 8, 5);
             var sidebar = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Margin = Padding.Empty };
             sidebar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 105));
             sidebar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
             var heading = Theme.Text(string.Format("페이지  {0:N0}쪽", count), 10, true);
             heading.Margin = new Padding(10, 10, 0, 0);
-            sidebar.Controls.Add(heading, 0, 0);
+            var selectionHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1,
+                RowCount = 3, Margin = Padding.Empty };
+            selectionHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            selectionHeader.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            selectionHeader.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            selectionHeader.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            selectionHeader.Controls.Add(heading, 0, 0);
+            var selectAll = Theme.Button("전체선택");
+            var clearSelection = Theme.Button("선택 해제");
+            foreach (var button in new[] { selectAll, clearSelection })
+            {
+                button.AutoSize = false;
+                button.MinimumSize = Size.Empty;
+                button.Dock = DockStyle.Fill;
+                button.Font = new Font("Malgun Gothic", 9);
+                button.Padding = new Padding(2, 0, 2, 0);
+                button.Margin = new Padding(0, 0, 5, 5);
+            }
+            var selectionTools = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2,
+                RowCount = 1, Margin = Padding.Empty };
+            selectionTools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            selectionTools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            selectionTools.Padding = new Padding(8, 0, 0, 0);
+            selectionTools.Controls.Add(selectAll, 0, 0);
+            selectionTools.Controls.Add(clearSelection, 1, 0);
+            selectionHeader.Controls.Add(selectionTools, 0, 1);
+            var selectedCount = Theme.Text("");
+            selectedCount.Margin = new Padding(10, 3, 0, 0);
+            selectionHeader.Controls.Add(selectedCount, 0, 2);
+            sidebar.Controls.Add(selectionHeader, 0, 0);
             pageList = new PageThumbnails(count, index => thumbnails.Render(path, index, 180, temporary), Navigate);
+            Action updateSelection = delegate {
+                int selected = pageList.SelectedPages.Count();
+                selectedCount.Text = string.Format("{0:N0} / {1:N0}쪽 선택", selected, Count);
+                selectAll.Enabled = selected < Count;
+                clearSelection.Enabled = selected > 0;
+                remove.Enabled = selected > 0;
+            };
+            pageList.SelectionChanged += updateSelection;
+            selectAll.Click += delegate { pageList.SelectPages(true); };
+            clearSelection.Click += delegate { pageList.SelectPages(false); };
+            updateSelection();
             sidebar.Controls.Add(pageList, 0, 1);
             sidebar.Controls.Add(remove, 0, 2);
             layout.Controls.Add(sidebar, 0, 1);
@@ -101,6 +159,21 @@ sealed class DocumentView : UserControl
     }
 
     Action ImageChanged;
+
+    public void RotatePage(int steps)
+    {
+        int turns;
+        rotations.TryGetValue(Page, out turns);
+        turns = (turns + steps % 4 + 4) % 4;
+        rotations[Page] = turns;
+        if (renderedPage == Page && canvas.Image != null)
+        {
+            canvas.Image.RotateFlip((RotateFlipType)((steps % 4 + 4) % 4));
+            ImageChanged();
+            canvas.Invalidate();
+        }
+        status(string.Format("{0:N0}쪽 · 보기 회전 {1}°", Page + 1, turns * 90));
+    }
 
     public void ChangeZoom(int steps)
     {
@@ -153,8 +226,12 @@ sealed class DocumentView : UserControl
         {
             var image = await Task.Run(() => preview.Render(FilePath, index, resolution, temporary));
             if (IsDisposed || version != generation) { image.Dispose(); return; }
+            int turns;
+            rotations.TryGetValue(index, out turns);
+            image.RotateFlip((RotateFlipType)turns);
             var old = canvas.Image;
             canvas.Image = image;
+            renderedPage = index;
             if (old != null) old.Dispose();
             ImageChanged();
         }
@@ -166,6 +243,7 @@ sealed class DocumentView : UserControl
         if (disposing)
         {
             ++generation;
+            tips.Dispose();
             if (canvas.Image != null) { canvas.Image.Dispose(); canvas.Image = null; }
         }
         base.Dispose(disposing);
