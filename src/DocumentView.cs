@@ -9,7 +9,8 @@ sealed class DocumentView : UserControl
 {
     const int FitZoom = 3;
     const int WheelNotch = 120;
-    static readonly double[] ZoomFactors = { 0.5, 0.67, 0.8, 1.0, 1.25, 1.6, 2.0 };
+    const int StandardResolution = 1200;
+    static readonly double[] ZoomFactors = { 0.5, 0.67, 0.8, 1.0, 1.25, 1.6, 2.0, 2.5, 3.0, 4.0 };
     readonly EngineClient preview;
     readonly string temporary;
     readonly Action<string> status;
@@ -22,11 +23,15 @@ sealed class DocumentView : UserControl
     readonly Button next = Theme.Button("›");
     readonly Dictionary<int, int> rotations = new Dictionary<int, int>();
     readonly ToolTip tips = new ToolTip();
+    readonly CheckBox sharp = new CheckBox { Text = "선명하게", Checked = true, AutoSize = true,
+        Margin = new Padding(3, 7, 10, 0) };
+    readonly Timer detailDelay = new Timer { Interval = 200 };
     int renderedPage = -1;
     bool initialized;
     int generation;
     int wheelRemainder;
-    int resolution = 1200;
+    int displayedResolution;
+    bool refreshingDetail;
     public string FilePath { get; private set; }
     public int Count { get; private set; }
     public int Page { get; private set; }
@@ -65,7 +70,7 @@ sealed class DocumentView : UserControl
         next.Click += delegate { Navigate(Page + 1); };
         var jump = Theme.Button("이동");
         jump.Click += delegate { Jump(); };
-        zoom.Items.AddRange(new object[] { "50%", "67%", "80%", "맞춤", "125%", "160%", "200%" });
+        zoom.Items.AddRange(new object[] { "50%", "67%", "80%", "맞춤", "125%", "160%", "200%", "250%", "300%", "400%" });
         zoom.SelectedIndex = FitZoom;
         viewport.Controls.Add(canvas);
         Action applyZoom = delegate {
@@ -79,11 +84,14 @@ sealed class DocumentView : UserControl
             canvas.Location = new Point(16, 16);
             canvas.Size = new Size((int)(canvas.Image.Width * fit), (int)(canvas.Image.Height * fit));
         };
-        zoom.SelectedIndexChanged += delegate { applyZoom(); };
+        zoom.SelectedIndexChanged += delegate { applyZoom(); ScheduleDetail(); };
+        sharp.CheckedChanged += delegate { ScheduleDetail(); };
+        detailDelay.Tick += delegate { detailDelay.Stop(); RefreshDetail(); };
         viewport.Resize += delegate { applyZoom(); };
         canvas.SizeChanged += delegate { if (canvas.Image != null && zoom.SelectedIndex == FitZoom) canvas.Invalidate(); };
         ImageChanged = applyZoom;
-        tools.Controls.AddRange(new Control[] { previous, next, counter, jump, zoom });
+        tips.SetToolTip(sharp, "200% 이상에서 고해상도로 그려 글자와 표의 윤곽을 또렷하게 표시합니다.");
+        tools.Controls.AddRange(new Control[] { previous, next, counter, jump, zoom, sharp });
         var rotateLeft = Theme.Button("↶ 왼쪽 회전");
         var rotateRight = Theme.Button("↷ 오른쪽 회전");
         rotateLeft.Click += delegate { RotatePage(-1); };
@@ -160,6 +168,66 @@ sealed class DocumentView : UserControl
 
     Action ImageChanged;
 
+    int DetailResolution
+    {
+        get
+        {
+            double zoomFactor = ZoomFactors[zoom.SelectedIndex];
+            return sharp.Checked && zoomFactor >= 2 ? (int)(StandardResolution * zoomFactor) : StandardResolution;
+        }
+    }
+
+    void ScheduleDetail()
+    {
+        detailDelay.Stop();
+        if (!refreshingDetail && renderedPage == Page && NeedsDetail) detailDelay.Start();
+    }
+
+    bool NeedsDetail { get { return sharp.Checked ? displayedResolution < DetailResolution : displayedResolution > StandardResolution; } }
+
+    async void RefreshDetail()
+    {
+        if (renderedPage != Page || !NeedsDetail) return;
+        int index = Page;
+        int version = generation;
+        int pixels = DetailResolution;
+        refreshingDetail = true;
+        bool settingsChanged = false;
+        try
+        {
+            var image = await Task.Run(() => preview.Render(FilePath, index, pixels, temporary, pixels > StandardResolution));
+            if (IsDisposed) { image.Dispose(); return; }
+            settingsChanged = version != generation || pixels != DetailResolution;
+            if (settingsChanged) { image.Dispose(); return; }
+            DisplayImage(image, index, pixels);
+        }
+        catch (Exception)
+        {
+            if (!IsDisposed)
+            {
+                settingsChanged = version != generation || pixels != DetailResolution;
+                if (!settingsChanged) status("선명한 보기로 전환하지 못했습니다. 현재 화면을 유지합니다.");
+            }
+        }
+        finally
+        {
+            refreshingDetail = false;
+            if (!IsDisposed && settingsChanged) ScheduleDetail();
+        }
+    }
+
+    void DisplayImage(Bitmap image, int index, int pixels)
+    {
+        int turns;
+        rotations.TryGetValue(index, out turns);
+        if (turns != 0) image.RotateFlip((RotateFlipType)turns);
+        var old = canvas.Image;
+        canvas.Image = image;
+        renderedPage = index;
+        displayedResolution = pixels;
+        if (old != null) old.Dispose();
+    }
+
     public void RotatePage(int steps)
     {
         int turns;
@@ -221,19 +289,16 @@ sealed class DocumentView : UserControl
         previous.Enabled = index > 0;
         next.Enabled = index + 1 < Count;
         int version = ++generation;
+        detailDelay.Stop();
+        renderedPage = -1;
         if (pageList != null) pageList.ShowPage(index);
         try
         {
-            var image = await Task.Run(() => preview.Render(FilePath, index, resolution, temporary));
+            var image = await Task.Run(() => preview.Render(FilePath, index, StandardResolution, temporary));
             if (IsDisposed || version != generation) { image.Dispose(); return; }
-            int turns;
-            rotations.TryGetValue(index, out turns);
-            image.RotateFlip((RotateFlipType)turns);
-            var old = canvas.Image;
-            canvas.Image = image;
-            renderedPage = index;
-            if (old != null) old.Dispose();
+            DisplayImage(image, index, StandardResolution);
             ImageChanged();
+            ScheduleDetail();
         }
         catch (Exception error) { if (!IsDisposed && version == generation) status("페이지를 열 수 없습니다. " + error.Message); }
     }
@@ -243,6 +308,7 @@ sealed class DocumentView : UserControl
         if (disposing)
         {
             ++generation;
+            detailDelay.Dispose();
             tips.Dispose();
             if (canvas.Image != null) { canvas.Image.Dispose(); canvas.Image = null; }
         }

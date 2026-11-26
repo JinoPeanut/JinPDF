@@ -60,6 +60,45 @@ static class WindowsSmoke
 
     static async Task Run(MainWindow app, string data)
     {
+        var explorer = app.Controls.Find("ExplorerMenu", true).OfType<Button>().Single();
+        var shortcutFolder = Path.Combine(data, "SendTo");
+        Invoke(app, "RefreshExplorerMenu", shortcutFolder);
+        if (explorer.Text != "탐색기 메뉴 · 미등록") throw new Exception("Missing unregistered state");
+        ExplorerMergeMenu.Register(shortcutFolder, Application.ExecutablePath);
+        Invoke(app, "RefreshExplorerMenu", shortcutFolder);
+        if (explorer.Text != "탐색기 메뉴 · 등록됨") throw new Exception("Missing registered state");
+        string shortcutPath = ExplorerMergeMenu.ShortcutPath(shortcutFolder);
+        if (!File.Exists(shortcutPath)) throw new Exception("Explorer registration did not create the shortcut");
+        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true));
+        dynamic shortcut = shell.CreateShortcut(shortcutPath);
+        try
+        {
+            if (shortcut.TargetPath != Application.ExecutablePath || shortcut.Arguments != "--merge")
+                throw new Exception("Explorer shortcut does not launch the app in merge mode");
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(shortcut);
+            Marshal.ReleaseComObject(shell);
+        }
+        ExplorerMergeMenu.Unregister(shortcutFolder);
+        if (File.Exists(shortcutPath)) throw new Exception("Explorer menu registration was not removed");
+        Invoke(app, "RefreshExplorerMenu", shortcutFolder);
+        if (explorer.Text != "탐색기 메뉴 · 미등록") throw new Exception("Registration state did not reset");
+        Console.WriteLine("Explorer menu registered and unregistered states OK");
+        var inputFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samples");
+        var inputs = new[] { "05-three-pages.pdf", "03-landscape.jpg", "01-spreadsheet.xlsx" };
+        using (var launched = new MainWindow(new[] { "--merge" }.Concat(inputs.Select(name => Path.Combine(inputFolder, name))).ToArray()))
+        {
+            launched.Show(app);
+            var grid = Find<MergeFileGrid>(launched);
+            await Until(() => grid.Rows.Count == inputs.Length, "Explorer launch queues all selected files");
+            var names = grid.Rows.Cast<DataGridViewRow>().Select(row => (string)row.Cells[MergeFileGrid.FileNameColumn].Value);
+            if (!names.SequenceEqual(inputs) || Find<TabControl>(launched).TabPages.Count != 1 || Find<MergeView>(launched).IsWorking)
+                throw new Exception("Explorer launch did not queue all mixed files in order for confirmation");
+            launched.Close();
+        }
+        Console.WriteLine("Explorer launch stages mixed files without starting the merge OK");
         VerifyButtonPaint();
         var tabs = Find<TabControl>(app);
         var merge = Find<MergeView>(app);
@@ -171,6 +210,7 @@ static class WindowsSmoke
         await Until(() => Find<PictureBox>(mergedView) != null && Children(mergedView).OfType<PictureBox>().Count(p => p.Image != null) >= 3,
             "Viewer and thumbnails render");
         VerifyViewerZoom(app, tabs, mergedView);
+        await VerifySharpZoom(tabs, mergedView);
         await VerifyViewerRotation(tabs, mergedView);
         Find<Button>(mergedView, "전체선택").PerformClick();
         foreach (string caption in new[] { "전체선택", "선택 해제", "↶ 왼쪽 회전", "↷ 오른쪽 회전" })
@@ -355,6 +395,22 @@ static class WindowsSmoke
             throw new Exception("Navigation lost per-page rotation");
         Find<Button>(document, "↷ 오른쪽 회전").PerformClick();
         Console.WriteLine("Rotation buttons, shortcuts, full turn and per-page persistence OK");
+    }
+
+    static async Task VerifySharpZoom(TabControl tabs, DocumentView document)
+    {
+        var zoom = Find<ComboBox>(document);
+        var sharp = Find<CheckBox>(document, "선명하게");
+        var canvas = Children(document).OfType<PictureBox>().Single(p => p.Dock == DockStyle.Fill);
+        int original = Math.Max(canvas.Image.Width, canvas.Image.Height);
+        for (int step = 0; step < 10; step++) PressViewerKey(tabs, Keys.Add);
+        if (zoom.Text != "400%" || sharp == null || document.Page != 0)
+            throw new Exception("Enlarged zoom range or sharp view option is missing");
+        await Until(() => Math.Max(canvas.Image.Width, canvas.Image.Height) >= original * 2, "400% renders at increased resolution");
+        sharp.Checked = false;
+        await Until(() => Math.Max(canvas.Image.Width, canvas.Image.Height) == original, "Turning off sharp view restores standard resolution");
+        sharp.Checked = true;
+        zoom.SelectedIndex = zoom.Items.IndexOf("맞춤");
     }
 
     static void VerifyViewerZoom(MainWindow app, TabControl tabs, DocumentView document)

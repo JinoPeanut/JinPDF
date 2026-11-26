@@ -37,9 +37,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'The bundled PDF engine failed its import check.' }
     Copy-Item (Join-Path $root 'src\engine.py'),(Join-Path $root 'src\office.ps1'),(Join-Path $root 'README.md') -Destination $stage
     Copy-Item (Join-Path $root 'samples') -Destination $stage -Recurse
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $release 'JinPDF-v1.2.4-win-x64.zip') -Force
-    Compress-Archive -Path (Join-Path $root 'samples\*') -DestinationPath (Join-Path $release 'JinPDF-v1.2.4-samples.zip') -Force
-    Get-FileHash -Algorithm SHA256 (Join-Path $release 'JinPDF-v1.2.4-*.zip') | Format-Table -AutoSize
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $release 'JinPDF-v1.2.8-win-x64.zip') -Force
+    Compress-Archive -Path (Join-Path $root 'samples\*') -DestinationPath (Join-Path $release 'JinPDF-v1.2.8-samples.zip') -Force
+    Get-FileHash -Algorithm SHA256 (Join-Path $release 'JinPDF-v1.2.8-*.zip') | Format-Table -AutoSize
 } finally {
     # The unique staging directory belongs to this build.
     $stageFull = [IO.Path]::GetFullPath($stage)

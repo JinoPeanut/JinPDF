@@ -19,6 +19,9 @@ sealed class MainWindow : Form, IMessageFilter
         SizeMode = TabSizeMode.Fixed, ItemSize = new Size(167, 34), ShowToolTips = true, HotTrack = true };
     readonly Button print = Theme.Button("인쇄");
     readonly Button compare = Theme.Button("나란히 보기");
+    readonly ContextMenuStrip explorerMenu = new ContextMenuStrip();
+    readonly Button explorer = Theme.Button("탐색기 메뉴");
+    readonly string sendToFolder = Environment.GetFolderPath(Environment.SpecialFolder.SendTo, Environment.SpecialFolderOption.DoNotVerify);
     readonly Label message = Theme.Text("");
     readonly Label printMessage = Theme.Text("");
     readonly RowStyle footerHeight = new RowStyle(SizeType.Absolute, 0);
@@ -98,7 +101,14 @@ sealed class MainWindow : Form, IMessageFilter
         open.Click += delegate { Browse(); };
         print.Click += delegate { PrintActive(); };
         compare.Click += delegate { OpenComparison(); };
-        commands.Controls.AddRange(new Control[] { open, print, compare });
+        explorer.Name = "ExplorerMenu";
+        explorer.Click += delegate {
+            RefreshExplorerMenu(sendToFolder);
+            explorerMenu.Show(explorer, new Point(0, explorer.Height));
+        };
+        explorerMenu.Items.Add("JinPDF로 병합 등록", null, delegate { SetExplorerMenu(true); });
+        explorerMenu.Items.Add("JinPDF로 병합 등록 해제", null, delegate { SetExplorerMenu(false); });
+        commands.Controls.AddRange(new Control[] { open, print, compare, explorer });
         header.Controls.Add(commands, 1, 0);
         layout.Controls.Add(header, 0, 0);
 
@@ -130,8 +140,51 @@ sealed class MainWindow : Form, IMessageFilter
         UpdateTools();
         Shown += delegate {
             Application.AddMessageFilter(this);
-            foreach (var path in args) OpenPdf(path);
+            RefreshExplorerMenu(sendToFolder);
+            if (args.Length > 0 && args[0] == ExplorerMergeMenu.MergeArgument)
+                merge.AddFiles(args.Skip(1));
+            else
+                foreach (var path in args) OpenPdf(path);
         };
+    }
+
+    void RefreshExplorerMenu(string folder)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(folder)) throw new IOException("Windows 보내기 폴더를 찾을 수 없습니다.");
+            bool exists = File.Exists(ExplorerMergeMenu.ShortcutPath(folder));
+            bool current = exists && ExplorerMergeMenu.IsRegisteredFor(folder, Application.ExecutablePath);
+            explorer.Text = "탐색기 메뉴 · " + (current ? "등록됨" : exists ? "다시 등록 필요" : "미등록");
+            explorerMenu.Items[0].Enabled = !current;
+            explorerMenu.Items[1].Enabled = exists;
+        }
+        catch (Exception)
+        {
+            explorer.Text = "탐색기 메뉴 · 확인 불가";
+            explorerMenu.Items[0].Enabled = true;
+            explorerMenu.Items[1].Enabled = true;
+        }
+    }
+
+    void SetExplorerMenu(bool register)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(sendToFolder)) throw new IOException("Windows 보내기 폴더를 찾을 수 없습니다.");
+            if (register)
+            {
+                ExplorerMergeMenu.Register(sendToFolder, Application.ExecutablePath);
+                Status("탐색기 메뉴 등록 완료. 우클릭 → 보내기 → JinPDF로 병합을 선택하세요.");
+            }
+            else
+            {
+                ExplorerMergeMenu.Unregister(sendToFolder);
+                Status("탐색기 메뉴에서 JinPDF로 병합 등록을 해제했습니다.");
+            }
+        }
+        catch (Exception error) { Status("탐색기 메뉴를 변경할 수 없습니다. " + error.Message); }
+        finally { RefreshExplorerMenu(sendToFolder); }
     }
 
     DocumentView Active { get { return tabs.SelectedTab == null ? null : tabs.SelectedTab.Tag as DocumentView; } }
@@ -171,7 +224,8 @@ sealed class MainWindow : Form, IMessageFilter
     void UpdateFooter()
     {
         footerHeight.Height = tabs.SelectedTab != mergeTab || isPrinting || !string.IsNullOrEmpty(printMessage.Text) ||
-            message.Text.StartsWith("PDF를 열 수 없습니다.", StringComparison.Ordinal) ? 30 : 0;
+            message.Text.StartsWith("PDF를 열 수 없습니다.", StringComparison.Ordinal) ||
+            message.Text.StartsWith("탐색기 메뉴", StringComparison.Ordinal) ? 30 : 0;
     }
 
     void Browse()
@@ -396,6 +450,7 @@ sealed class MainWindow : Form, IMessageFilter
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         Application.RemoveMessageFilter(this);
+        explorerMenu.Dispose();
         base.OnFormClosed(e);
         tabs.Dispose();
         preview.Dispose();

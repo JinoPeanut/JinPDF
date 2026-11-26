@@ -50,12 +50,12 @@ sealed class EngineClient : IDisposable
         process.BeginErrorReadLine();
     }
 
-    public Bitmap Render(string path, int page, int pixels, string temporary)
+    public Bitmap Render(string path, int page, int pixels, string temporary, bool sharpen = false)
     {
         string output = Path.Combine(temporary, Guid.NewGuid().ToString("N") + ".png");
         try
         {
-            Run(new { op = "render", path = path, page = page, pixels = pixels, @out = output });
+            Run(new { op = "render", path = path, page = page, pixels = pixels, sharpen = sharpen, @out = output });
             using (var decoded = new Bitmap(output)) return new Bitmap(decoded);
         }
         finally { if (File.Exists(output)) File.Delete(output); }

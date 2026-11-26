@@ -5,10 +5,10 @@ import os
 import subprocess
 import sys
 import tempfile
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 from pypdf import PdfReader, PdfWriter
 import pypdfium2 as pdfium
 
@@ -17,8 +17,23 @@ IMAGES = {'.jpg', '.jpeg', '.jfif', '.png'}
 OFFICE = {'.xlsx', '.xls', '.pptx', '.ppt'}
 
 
+@contextmanager
+def open_pdf(path):
+    try:
+        document = pdfium.PdfDocument(path)
+    except ValueError as error:
+        if 'embedded null character in path' not in str(error):
+            raise
+        # A valid file can be opened directly when path resolution fails.
+        with path.open('rb') as stream, pdfium.PdfDocument(stream) as document:
+            yield document
+    else:
+        with document:
+            yield document
+
+
 def page_count(path):
-    with pdfium.PdfDocument(path) as doc:
+    with open_pdf(path) as doc:
         count = len(doc)
     if not count:
         raise ValueError('페이지가 없는 PDF입니다.')
@@ -127,13 +142,18 @@ def handle(request, progress=lambda **_: None):
         return publish(writer, path, '_편집됨')
 
     if op == 'render':
-        with pdfium.PdfDocument(path) as doc:
+        with open_pdf(path) as doc:
             doc.init_forms()
             with closing(doc[request['page']]) as page:
                 scale = request['pixels'] / max(page.get_size())
                 with closing(page.render(scale=scale)) as bitmap:
                     with bitmap.to_pil() as image:
-                        image.save(request['out'], format='PNG')
+                        if request.get('sharpen'):
+                            radius = max(2, min(7, request['pixels'] / 700))
+                            with image.filter(ImageFilter.UnsharpMask(radius=radius, percent=180, threshold=2)) as sharpened:
+                                sharpened.save(request['out'], format='PNG')
+                        else:
+                            image.save(request['out'], format='PNG')
             return {'count': len(doc)}
 
     raise ValueError('지원하지 않는 작업입니다.')

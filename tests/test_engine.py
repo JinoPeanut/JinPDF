@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pypdf import PdfReader, PdfWriter
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from engine import handle
 
@@ -78,3 +79,28 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result['count'], 3)
         with Image.open(out) as image:
             self.assertEqual(image.size, (125, 250))
+
+    def test_pdf_can_be_read_when_resolving_its_path_fails(self):
+        out = self.root / 'preview.png'
+        with patch.object(Path, 'resolve', side_effect=ValueError('stat: embedded null character in path')):
+            self.assertEqual(handle({'op': 'count', 'path': str(self.original)})['count'], 3)
+            result = handle({'op': 'render', 'path': str(self.original), 'page': 1, 'pixels': 250, 'out': str(out)})
+        self.assertEqual(result['count'], 3)
+        self.assertTrue(out.is_file())
+
+    def test_sharp_view_increases_edge_contrast_without_changing_page_size(self):
+        source = self.root / 'scan.pdf'
+        image = Image.new('L', (120, 120), 230)
+        ImageDraw.Draw(image).rectangle((30, 30, 90, 90), fill=90)
+        image.filter(ImageFilter.GaussianBlur(1.5)).save(source, 'PDF')
+        request = {'op': 'render', 'path': str(source), 'page': 0, 'pixels': 480}
+        plain, sharp = self.root / 'plain.png', self.root / 'sharp.png'
+        handle(dict(request, out=str(plain)))
+        handle(dict(request, out=str(sharp), sharpen=True))
+        with Image.open(plain) as before, Image.open(sharp) as after:
+            self.assertEqual(before.size, after.size)
+            self.assertIsNotNone(ImageChops.difference(before, after).getbbox())
+            def peak_contrast(img):
+                with img.convert('L') as gray:
+                    return max(gray.getpixel((x, 240)) - gray.getpixel((x + 1, 240)) for x in range(105, 136))
+            self.assertGreater(peak_contrast(after), peak_contrast(before))
