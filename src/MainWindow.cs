@@ -18,6 +18,12 @@ sealed class MainWindow : Form, IMessageFilter
     readonly PdfTabs tabs = new PdfTabs { Dock = DockStyle.Fill, DrawMode = TabDrawMode.OwnerDrawFixed,
         SizeMode = TabSizeMode.Fixed, ItemSize = new Size(167, 34), ShowToolTips = true, HotTrack = true };
     readonly Button print = Theme.Button("인쇄");
+    readonly FlowLayoutPanel printMarginOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 10, 0) };
+    readonly CheckBox customPrintMargins = new CheckBox { Text = "인쇄 여백", AutoSize = true,
+        Margin = new Padding(0, 3, 4, 0) };
+    readonly NumericUpDown printMarginMillimeters = new NumericUpDown { AccessibleName = "인쇄 여백 (mm)",
+        Minimum = 1, Maximum = 50, Value = 15, Width = 48, Enabled = false, Margin = new Padding(0, 0, 4, 0) };
     readonly Button compare = Theme.Button("나란히 보기");
     readonly ContextMenuStrip explorerMenu = new ContextMenuStrip();
     readonly Button explorer = Theme.Button("탐색기 메뉴");
@@ -108,7 +114,11 @@ sealed class MainWindow : Form, IMessageFilter
         };
         explorerMenu.Items.Add("JinPDF로 병합 등록", null, delegate { SetExplorerMenu(true); });
         explorerMenu.Items.Add("JinPDF로 병합 등록 해제", null, delegate { SetExplorerMenu(false); });
-        commands.Controls.AddRange(new Control[] { open, print, compare, explorer });
+        var marginUnit = Theme.Text("mm");
+        marginUnit.Margin = new Padding(0, 3, 0, 0);
+        printMarginOptions.Controls.AddRange(new Control[] { customPrintMargins, printMarginMillimeters, marginUnit });
+        customPrintMargins.CheckedChanged += delegate { printMarginMillimeters.Enabled = customPrintMargins.Checked; };
+        commands.Controls.AddRange(new Control[] { open, print, printMarginOptions, compare, explorer });
         header.Controls.Add(commands, 1, 0);
         layout.Controls.Add(header, 0, 0);
 
@@ -213,6 +223,8 @@ sealed class MainWindow : Form, IMessageFilter
         print.Enabled = Active != null && !isPrinting;
         compare.Enabled = Active != null && Docs.Count() >= 2;
         print.Visible = Active != null;
+        printMarginOptions.Visible = print.Visible;
+        printMarginOptions.Enabled = !isPrinting;
         compare.Visible = compare.Enabled;
         UpdateFooter();
         if (Active != null) Active.ActivateView();
@@ -378,7 +390,8 @@ sealed class MainWindow : Form, IMessageFilter
                     printProgress.Value = Math.Min(done, printProgress.Maximum);
                     printMessage.Text = string.Format("인쇄 중 · {0}/{1}쪽 전송", done, printProgress.Maximum);
                 });
-                await Task.Run(() => PrintJobs.Send(document, view.FilePath, view.Count, printing, temporary, progress));
+                int? marginMillimeters = customPrintMargins.Checked ? (int?)printMarginMillimeters.Value : null;
+                await Task.Run(() => PrintJobs.Send(document, view.FilePath, view.Count, printing, temporary, progress, marginMillimeters));
                 printMessage.Text = "인쇄 큐 전송 완료";
             }
         }

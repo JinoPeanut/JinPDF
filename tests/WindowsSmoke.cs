@@ -181,6 +181,15 @@ static class WindowsSmoke
         if (rows.Rows.Count != 0 || save.Enabled) throw new Exception("Successful merge left files in the queue");
 
         var mergedView = (DocumentView)tabs.SelectedTab.Tag;
+        var marginOption = Find<CheckBox>(app, "인쇄 여백");
+        var marginInput = Children(app).OfType<NumericUpDown>().Single(input => input.AccessibleName == "인쇄 여백 (mm)");
+        if (!marginOption.Visible || marginOption.Checked || marginInput.Enabled || marginInput.Value != 15)
+            throw new Exception("Incorrect print margin controls or defaults");
+        marginOption.Checked = true;
+        if (!marginInput.Enabled) throw new Exception("Custom print margin cannot be edited");
+        marginInput.Value = 10;
+        marginOption.Checked = false;
+        if (marginInput.Enabled || marginInput.Value != 10) throw new Exception("Disabling print margins lost the entered size");
         if (!PressViewerKey(tabs, Keys.Right) || mergedView.Page != 1 ||
             !PressViewerKey(tabs, Keys.Down) || mergedView.Page != 2 ||
             !PressViewerKey(tabs, Keys.Left) || mergedView.Page != 1 ||
@@ -361,7 +370,52 @@ static class WindowsSmoke
             }
             await Until(() => File.Exists(printed) && new FileInfo(printed).Length > 0, "Windows virtual printer output");
             if (Count(worker, printed) != 2) throw new Exception("Incorrect virtual print output page count");
+            await VerifyPrintMargins(worker, data, printer);
         }
+    }
+
+    static async Task VerifyPrintMargins(EngineClient worker, string data, string printer)
+    {
+        string source = Path.Combine(data, "print-margin-fixture.png");
+        string pdf = Path.Combine(data, "print-margin-fixture.pdf");
+        using (var image = new Bitmap(210, 297))
+        {
+            using (var graphics = Graphics.FromImage(image)) graphics.Clear(Color.Black);
+            image.Save(source, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        worker.Run(new { op = "prepare", path = source, @out = pdf });
+        var edgeSizes = new List<int[]>();
+        foreach (int? margin in new int?[] { null, 15, 10 })
+        {
+            string output = Path.Combine(data, "margins-" + (margin.HasValue ? margin.Value.ToString() : "standard") + ".pdf");
+            using (var document = PrintJobs.Create(pdf, 1))
+            {
+                document.PrinterSettings.PrinterName = printer;
+                document.PrinterSettings.PrintToFile = true;
+                document.PrinterSettings.PrintFileName = output;
+                document.DefaultPageSettings.PaperSize = document.PrinterSettings.PaperSizes.Cast<PaperSize>()
+                    .First(paper => paper.Kind == PaperKind.A4);
+                await Task.Run(() => PrintJobs.Send(document, pdf, 1, worker, data, new PrintCounter(), margin));
+            }
+            await Until(() => File.Exists(output) && new FileInfo(output).Length > 0, "Print margin test output");
+            using (var result = worker.Render(output, 0, 594, data))
+            {
+                var columns = Enumerable.Range(0, result.Width).Where(x => result.GetPixel(x, result.Height / 2).R < 128).ToArray();
+                var rows = Enumerable.Range(0, result.Height).Where(y => result.GetPixel(result.Width / 2, y).R < 128).ToArray();
+                edgeSizes.Add(new[] { columns.First(), result.Width - 1 - columns.Last(), rows.First(), result.Height - 1 - rows.Last() });
+            }
+        }
+        if (!edgeSizes[0].Zip(edgeSizes[1], (standard, narrow) => standard > narrow).All(smaller => smaller))
+            throw new Exception("Narrow margins did not reduce all four edges in the virtual printout");
+        // A4's aspect ratio leaves extra space on the top and bottom after fitting within the inset.
+        if (edgeSizes[1].Take(2).Any(pixels => pixels < 29 || pixels > 32) ||
+            edgeSizes[1].Skip(2).Any(pixels => pixels < 40 || pixels > 45))
+            throw new Exception("A4 print did not retain the expected note margins: " + string.Join(",", edgeSizes[1]));
+        if (edgeSizes[2].Take(2).Any(pixels => pixels < 19 || pixels > 22) ||
+            edgeSizes[2].Skip(2).Any(pixels => pixels < 26 || pixels > 31))
+            throw new Exception("A4 print ignored the custom 10 mm margin: " + string.Join(",", edgeSizes[2]));
+        Console.WriteLine("Narrow margins reduce all four edges: " + string.Join(",", edgeSizes[0]) + " -> " + string.Join(",", edgeSizes[1]));
+        Console.WriteLine("Custom 10 mm A4 margins: " + string.Join(",", edgeSizes[2]));
     }
 
     static bool PressViewerKey(Control target, Keys key)

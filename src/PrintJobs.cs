@@ -15,7 +15,8 @@ static class PrintJobs
         return document;
     }
 
-    public static void Send(PrintDocument document, string path, int count, EngineClient engine, string temporary, IProgress<int> progress)
+    public static void Send(PrintDocument document, string path, int count, EngineClient engine, string temporary,
+        IProgress<int> progress, int? marginMillimeters = null)
     {
         var settings = document.PrinterSettings;
         int first = settings.PrintRange == PrintRange.SomePages ? settings.FromPage : 1;
@@ -25,8 +26,23 @@ static class PrintJobs
         PrintPageEventHandler page = delegate(object sender, PrintPageEventArgs e) {
             using (var image = engine.Render(path, index, 2350, temporary))
             {
-                var target = e.MarginBounds;
-                target.Offset(-(int)e.PageSettings.HardMarginX, -(int)e.PageSettings.HardMarginY);
+                RectangleF target;
+                if (marginMillimeters.HasValue)
+                {
+                    // With OriginAtMargins off, graphics coordinates start at the printable area.
+                    var printable = e.PageSettings.PrintableArea;
+                    float margin = marginMillimeters.Value * 100 / 25.4f;
+                    var inset = new RectangleF(margin - printable.X, margin - printable.Y,
+                        e.PageBounds.Width - 2 * margin, e.PageBounds.Height - 2 * margin);
+                    target = RectangleF.Intersect(new RectangleF(PointF.Empty, printable.Size), inset);
+                    if (target.Width <= 0 || target.Height <= 0)
+                        throw new ArgumentException("이 용지에는 설정한 여백을 남길 수 없습니다.");
+                }
+                else
+                {
+                    target = e.MarginBounds;
+                    target.Offset(-(int)e.PageSettings.HardMarginX, -(int)e.PageSettings.HardMarginY);
+                }
                 Theme.Fit(e.Graphics, image, target);
             }
             index++;
